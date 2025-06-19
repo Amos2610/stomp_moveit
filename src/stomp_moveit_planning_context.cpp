@@ -249,7 +249,12 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
   auto config = getStompConfig(params_, group->getActiveJointModels().size() /* num_dimensions */);
   robot_trajectory::RobotTrajectoryPtr input_trajectory; // input_trajectoryという軌道を格納する変数を定義
   
-  if (setCustomTrajectory(trajectory_data, input_trajectory))
+  // カスタム軌道使用フラグ（falseに設定するとカスタム軌道を使用しない = sとgの線形補間）
+  bool use_custom_trajectory = false;
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "カスタム軌道の使用設定: %s", 
+              use_custom_trajectory ? "有効" : "無効");
+  
+  if (use_custom_trajectory && setCustomTrajectory(trajectory_data, input_trajectory))
   {
     RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "Custom trajectoryが設定されました!!!!!!!!!!!!!");
     config.num_timesteps = input_trajectory->size();
