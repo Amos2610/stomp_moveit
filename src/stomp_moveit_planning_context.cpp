@@ -250,7 +250,7 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
   robot_trajectory::RobotTrajectoryPtr input_trajectory; // input_trajectoryという軌道を格納する変数を定義
   
   // カスタム軌道使用フラグ（falseに設定するとカスタム軌道を使用しない = sとgの線形補間）
-  bool use_custom_trajectory = false;
+  bool use_custom_trajectory = true;
   RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "カスタム軌道の使用設定: %s", 
               use_custom_trajectory ? "有効" : "無効");
   
