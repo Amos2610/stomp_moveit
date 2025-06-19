@@ -2,7 +2,7 @@
 
 #include <moveit/planning_interface/planning_interface.h>
 
-#include <stomp_moveit_parameters.hpp>
+#include <stomp_moveit/stomp_moveit_parameters.hpp>
 
 // Forward declaration
 namespace stomp
@@ -27,6 +27,9 @@ public:
 
   void setPathPublisher(std::shared_ptr<rclcpp::Publisher<visualization_msgs::msg::MarkerArray>> path_publisher);
   std::shared_ptr<rclcpp::Publisher<visualization_msgs::msg::MarkerArray>> getPathPublisher();
+
+  // カスタム軌道を設定する関数
+  bool setCustomTrajectory(const Eigen::MatrixXd& trajectory_data, robot_trajectory::RobotTrajectoryPtr& input_trajectory);
 
 private:
   const stomp_moveit::Params params_;
