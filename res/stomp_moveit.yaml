@@ -2,7 +2,7 @@ stomp_moveit:
   num_iterations: {
     type: int,
     description: "Total number of iterations that STOMP is allowed to run",
-    default_value: 60,
+    default_value: 100,
     validation: {
       rsl::gt_eq<>: [1]
     }
@@ -18,17 +18,17 @@ stomp_moveit:
   num_rollouts: {
     type: int,
     description: "Number of noisy trajectories that are being generated for each iteration",
-    default_value: 0,
+    default_value: 15,
     validation: {
-      rsl::gt_eq<>: [0]
+      rsl::gt_eq<>: [1]
     }
   }
   max_rollouts: {
     type: int,
     description: "Combined number of old and new rollouts that are being processed for each iteration",
-    default_value: 0,
+    default_value: 25,
     validation: {
-      rsl::gt_eq<>: [0]
+      rsl::gt_eq<>: [1]
     }
   }
   num_timesteps: {
