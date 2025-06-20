@@ -25,11 +25,14 @@ bool solveWithStomp(const std::shared_ptr<stomp::Stomp>& stomp, const moveit::co
   Eigen::MatrixXd waypoints;
   const auto& joints = group->getActiveJointModels();
   bool success;
-  if (!input_trajectory || input_trajectory->empty())
+  if (!input_trajectory || input_trajectory->empty()){
     success = stomp->solve(get_positions(start_state, joints), get_positions(goal_state, joints), waypoints);
+    RCLCPP_INFO_STREAM(rclcpp::get_logger("stomp_moveit"), "Initial trajectory is empty, using start and goal states.");
+  }
   else
   {
     auto input = robot_trajectory_to_matrix(*input_trajectory);
+    RCLCPP_INFO_STREAM(rclcpp::get_logger("stomp_moveit"), "Initial trajectory:\n" << input);
     success = stomp->solve(input, waypoints);
   }
   if (success)

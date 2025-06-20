@@ -14,7 +14,7 @@ namespace stomp_moveit
 {
 namespace visualization
 {
-
+// Visualization of the trajectory in STOMP
 namespace
 {
 const auto YELLOW = [](const double& a) {
@@ -36,7 +36,7 @@ const auto RED = [](const double& a) {
 visualization_msgs::msg::MarkerArray
 createTrajectoryMarkerArray(const robot_trajectory::RobotTrajectory& robot_trajectory,
                             const moveit::core::LinkModel* ee_parent_link,
-                            const std_msgs::msg::ColorRGBA& color = RED(1.0))
+                            const std_msgs::msg::ColorRGBA& color = RED(1.0)) // Red
 {
   visualization_msgs::msg::MarkerArray markers_array;
 
@@ -47,9 +47,9 @@ createTrajectoryMarkerArray(const robot_trajectory::RobotTrajectory& robot_traje
   sphere_marker.type = visualization_msgs::msg::Marker::SPHERE;
   sphere_marker.action = visualization_msgs::msg::Marker::ADD;
   sphere_marker.lifetime = rclcpp::Duration(0, 0);  // Infinite lifetime
-  sphere_marker.scale.x = 0.01;
-  sphere_marker.scale.y = 0.01;
-  sphere_marker.scale.z = 0.01;
+  sphere_marker.scale.x = 0.023;
+  sphere_marker.scale.y = 0.023;
+  sphere_marker.scale.z = 0.023;
   sphere_marker.color = color;
   sphere_marker.frame_locked = false;
 
@@ -91,7 +91,7 @@ get_iteration_path_publisher(rclcpp::Publisher<visualization_msgs::msg::MarkerAr
 
     if (ee_parent_link != nullptr && !trajectory.empty())
     {
-      marker_publisher->publish(createTrajectoryMarkerArray(trajectory, ee_parent_link, YELLOW(1.0)));
+      marker_publisher->publish(createTrajectoryMarkerArray(trajectory, ee_parent_link, YELLOW(1.0))); // Yellow
     }
   };
 

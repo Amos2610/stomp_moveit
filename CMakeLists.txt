@@ -56,6 +56,20 @@ ament_target_dependencies(stomp_moveit_example
 )
 target_link_libraries(stomp_moveit_example stomp::stomp)
 
+# Demo For Xarm6
+add_executable(stomp_moveit_xarm6_example src/stomp_moveit_xarm6_example.cpp)
+ament_target_dependencies(stomp_moveit_xarm6_example
+  moveit_core
+  moveit_visual_tools
+  std_msgs
+  tf2_eigen
+  visualization_msgs
+)
+target_link_libraries(stomp_moveit_xarm6_example stomp::stomp)
+# Install the demo executable
+install(TARGETS stomp_moveit_xarm6_example
+  DESTINATION lib/${PROJECT_NAME})
+
 install(TARGETS stomp_moveit_example
   DESTINATION lib/${PROJECT_NAME})
 
