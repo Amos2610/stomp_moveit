@@ -28,6 +28,9 @@ public:
   void setPathPublisher(std::shared_ptr<rclcpp::Publisher<visualization_msgs::msg::MarkerArray>> path_publisher);
   std::shared_ptr<rclcpp::Publisher<visualization_msgs::msg::MarkerArray>> getPathPublisher();
 
+  // パラメータにアクセスするためのメソッド
+  const stomp_moveit::Params& getParams() const { return params_; }
+
   // カスタム軌道を設定する関数
   bool setCustomTrajectory(const Eigen::MatrixXd& trajectory_data, robot_trajectory::RobotTrajectoryPtr& input_trajectory);
 
