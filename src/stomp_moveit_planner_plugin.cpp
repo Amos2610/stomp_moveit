@@ -52,7 +52,7 @@ public:
     auto const params = param_listener_->get_params();
 
     std::shared_ptr<StompPlanningContext> planning_context =
-        std::make_shared<StompPlanningContext>("STOMP", req.group_name, params);
+        std::make_shared<StompPlanningContext>("STOMP", req.group_name, params, this->node_);
     planning_context->setPlanningScene(planning_scene);
     planning_context->setMotionPlanRequest(req);
 

@@ -60,6 +60,7 @@ public:
   void initialize(const rclcpp::Node::SharedPtr& node, const std::string& parameter_namespace) override
   {
     param_listener_ = std::make_shared<stomp_moveit::ParamListener>(node, parameter_namespace);
+    node_ = node;
   }
 
   std::string getDescription() const override
@@ -97,7 +98,7 @@ public:
 
     // Initialize STOMP Planner
     PlanningContextPtr planning_context =
-        std::make_shared<StompPlanningContext>("STOMP", req.group_name, param_listener_->get_params());
+        std::make_shared<StompPlanningContext>("STOMP", req.group_name, param_listener_->get_params(), this->node_);
     planning_context->clear();
     planning_context->setPlanningScene(ps);
     planning_context->setMotionPlanRequest(seed_req);
@@ -119,6 +120,7 @@ public:
 
 private:
   std::shared_ptr<stomp_moveit::ParamListener> param_listener_;
+  rclcpp::Node::SharedPtr node_;  // これを追加
 };
 }  // namespace stomp_moveit
 

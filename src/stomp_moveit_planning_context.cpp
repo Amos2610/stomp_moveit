@@ -166,8 +166,8 @@ stomp::StompConfiguration getStompConfig(const stomp_moveit::Params& params, siz
 }
 
 StompPlanningContext::StompPlanningContext(const std::string& name, const std::string& group,
-                                          const stomp_moveit::Params& params)
-  : planning_interface::PlanningContext(name, group), params_(params)
+                                          const stomp_moveit::Params& params, rclcpp::Node::SharedPtr node)
+  : planning_interface::PlanningContext(name, group), params_(params), node_(node)
 {
 }
 
@@ -249,11 +249,13 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
   auto config = getStompConfig(params_, group->getActiveJointModels().size() /* num_dimensions */);
   robot_trajectory::RobotTrajectoryPtr input_trajectory; // input_trajectoryという軌道を格納する変数を定義
   
-  // カスタム軌道使用フラグ（falseに設定するとカスタム軌道を使用しない = sとgの線形補間）
-  bool use_custom_trajectory = true;
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "カスタム軌道の使用設定: %s", 
-              use_custom_trajectory ? "有効" : "無効");
-  
+  bool use_custom_trajectory = false;
+  std::vector<rclcpp::Parameter> params = node_->get_parameters({"stomp.use_custom_trajectory"});
+  if (!params.empty()) {
+      use_custom_trajectory = params[0].as_bool();
+      RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "カスタム軌道の使用設定: %s",
+                  use_custom_trajectory ? "有効" : "無効");
+  }
   if (use_custom_trajectory && setCustomTrajectory(trajectory_data, input_trajectory))
   {
     RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "Custom trajectoryが設定されました!!!!!!!!!!!!!");
