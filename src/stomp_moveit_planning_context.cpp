@@ -122,8 +122,30 @@ stomp::TaskPtr createStompTask(const stomp::StompConfiguration& config, StompPla
     cost_fn = costs::get_collision_cost_function(planning_scene, group, 1.0 /* collision penalty */);
   }
 
-  // TODO(henningkayser): parameterize stddev
-  const std::vector<double> stddev(group->getActiveJointModels().size(), 0.1);
+  // パラメータからstddevを取得
+  const auto& params = context.getParams();
+  std::vector<double> stddev;
+  
+  // 関節数に合わせてstddevを調整
+  const size_t num_joints = group->getActiveJointModels().size();
+  stddev.resize(num_joints, 1.0); // デフォルト値で初期化
+  
+  // 各関節のstddevパラメータを取得
+  if (num_joints > 0) stddev[0] = params.stddev_joint_0;
+  if (num_joints > 1) stddev[1] = params.stddev_joint_1;
+  if (num_joints > 2) stddev[2] = params.stddev_joint_2;
+  if (num_joints > 3) stddev[3] = params.stddev_joint_3;
+  if (num_joints > 4) stddev[4] = params.stddev_joint_4;
+  if (num_joints > 5) stddev[5] = params.stddev_joint_5;
+  
+  // stddevパラメータをログ出力
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "ーーーーーーーーーーーーーーーーーーーーーー");
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "設定中のstddevの値:");
+  for (size_t i = 0; i < stddev.size(); ++i) {
+    RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Joint %lu: %f", i, stddev[i]);
+  }
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "ーーーーーーーーーーーーーーーーーーーーーー");
+  
   auto noise_generator_fn = noise::get_normal_distribution_generator(num_timesteps, stddev);
   auto filter_fn =
       filters::chain({ filters::simple_smoothing_matrix(num_timesteps), filters::enforce_position_bounds(group) });
@@ -152,16 +174,15 @@ stomp::StompConfiguration getStompConfig(const stomp_moveit::Params& params, siz
   config.max_rollouts = params.max_rollouts;
   config.control_cost_weight = params.control_cost_weight;
   RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "ーーーーーーーーーーーーーーーーーーーーーー");
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "パラメータ");
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "STOMP Configuration Parameters:");
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "Num Iterations: %ld", params.num_iterations);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "Num Iterations After Valid: %ld", params.num_iterations_after_valid);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "Num Timesteps: %ld", params.num_timesteps);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "Delta T: %f", params.delta_t);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "Exponentiated Cost Sensitivity: %f", params.exponentiated_cost_sensitivity);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "Num Rollouts: %ld", params.num_rollouts);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "Max Rollouts: %ld", params.max_rollouts);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "Control Cost Weight: %f", params.control_cost_weight);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "設定中のパラメータ:");
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Num Iterations: %d",                 config.num_iterations);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Num Iterations After Valid: %d",     config.num_iterations_after_valid);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Num Timesteps: %d",                  config.num_timesteps);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Delta T: %f",                        config.delta_t);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Exponentiated Cost Sensitivity: %f", config.exponentiated_cost_sensitivity);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Num Rollouts: %d",                   config.num_rollouts);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Max Rollouts: %d",                   config.max_rollouts);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Control Cost Weight: %f",            config.control_cost_weight);
   RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "ーーーーーーーーーーーーーーーーーーーーーー");
 
   return config;
@@ -370,6 +391,7 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
   auto config = getStompConfig(params_, group->getActiveJointModels().size() /* num_dimensions */);
   robot_trajectory::RobotTrajectoryPtr input_trajectory; // input_trajectoryという軌道を格納する変数を定義
   
+  // カスタム軌道使用フラグ（falseに設定するとカスタム軌道を使用しない = sとgの線形補間）
   bool use_custom_trajectory = false;
   std::vector<rclcpp::Parameter> params = node_->get_parameters({"stomp.use_custom_trajectory"});
   if (!params.empty()) {
@@ -377,6 +399,7 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
       RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "カスタム軌道の使用設定: %s",
                   use_custom_trajectory ? "有効" : "無効");
   }
+
   if (use_custom_trajectory && setCustomTrajectory(trajectory_data, input_trajectory))
   {
     RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "Custom trajectoryが設定されました!!!!!!!!!!!!!");
@@ -420,18 +443,18 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
   planning_time = elapsed_seconds.count();
 
   // プランニング結果のtrajectoryをコンソールに出力
-  if (trajectory && !trajectory->empty()) {
-    const auto& joint_names = group->getActiveJointModelNames();
-    for (std::size_t i = 0; i < trajectory->getWayPointCount(); ++i) {
-      std::cout << "Step " << i << ": ";
-      for (std::size_t j = 0; j < joint_names.size(); ++j) {
-        double value = trajectory->getWayPoint(i).getVariablePosition(joint_names[j]);
-        std::cout << value;
-        if (j + 1 < joint_names.size()) std::cout << " ";
-      }
-      std::cout << std::endl;
-    }
-  }
+  // if (trajectory && !trajectory->empty()) {
+  //   const auto& joint_names = group->getActiveJointModelNames();
+  //   for (std::size_t i = 0; i < trajectory->getWayPointCount(); ++i) {
+  //     std::cout << "Step " << i << ": ";
+  //     for (std::size_t j = 0; j < joint_names.size(); ++j) {
+  //       double value = trajectory->getWayPoint(i).getVariablePosition(joint_names[j]);
+  //       std::cout << value;
+  //       if (j + 1 < joint_names.size()) std::cout << " ";
+  //     }
+  //     std::cout << std::endl;
+  //   }
+  // }
 
   return result_code == moveit_msgs::msg::MoveItErrorCodes::SUCCESS;
 }
