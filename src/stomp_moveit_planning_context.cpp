@@ -2,6 +2,7 @@
 #include <future>
 
 #include <stomp/stomp.h>
+#include <rclcpp/executors/single_threaded_executor.hpp>
 
 #include <stomp_moveit/stomp_moveit_planning_context.hpp>
 #include <stomp_moveit/trajectory_visualization.hpp>
@@ -14,6 +15,7 @@
 
 #include <moveit/constraint_samplers/constraint_sampler_manager.h>
 #include <moveit/robot_state/conversions.h>
+#include "path_reuse_method/srv/get_path_seed_trajectory.hpp"
 
 namespace stomp_moveit
 {
@@ -165,19 +167,139 @@ stomp::StompConfiguration getStompConfig(const stomp_moveit::Params& params, siz
   return config;
 }
 
+StompPlanningContext::~StompPlanningContext()
+{
+  try {
+    if (exec_) {
+      exec_->cancel();  // spin を停止
+    }
+    if (exec_thread_.joinable()) {
+      exec_thread_.join();
+    }
+    if (exec_ && client_node_) {
+      exec_->remove_node(client_node_);
+    }
+  } catch (...) {
+    // 例外は外へ出さない
+  }
+
+  get_path_seed_client_.reset();
+  client_node_.reset();
+  exec_.reset();
+}
+
 StompPlanningContext::StompPlanningContext(const std::string& name, const std::string& group,
                                           const stomp_moveit::Params& params, rclcpp::Node::SharedPtr node)
   : planning_interface::PlanningContext(name, group), params_(params), node_(node)
 {
+  // pathseedのためのクライアントノードを作成
+  rclcpp::NodeOptions opts;
+  opts.allow_undeclared_parameters(true);
+  opts.automatically_declare_parameters_from_overrides(true);
+  client_node_ = std::make_shared<rclcpp::Node>("stomp_pathseed_client", opts);
+
+  cbg_ = client_node_->create_callback_group(rclcpp::CallbackGroupType::Reentrant); // Reentrant のコールバックグループ
+
+  // サービスクライアントをクライアントノード上で作成
+  get_path_seed_client_ =
+      client_node_->create_client<path_reuse_method::srv::GetPathSeedTrajectory>(
+          "/get_path_seed_trajectory",
+          rmw_qos_profile_services_default,
+          cbg_);
+
+  // PathSeedを取得するための専用Executorを作成（別スレッドで動作させることで高速化を図る）
+  exec_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+  exec_->add_node(client_node_);
+
+  exec_thread_ = std::thread([this]() {
+    try {
+      exec_->spin();  // 常駐スピン
+    } catch (const std::exception& e) {
+      RCLCPP_ERROR(client_node_->get_logger(), "Executor spin exception: %s", e.what());
+    }
+  });
+}
+
+// -----------------------
+// Path Seedを取得する関数
+// -----------------------
+bool StompPlanningContext::GetPathSeed()
+{
+  RCLCPP_INFO(rclcpp::get_logger("StompPlanningContext"),
+            "Calling service: %s", get_path_seed_client_->get_service_name());
+
+  RCLCPP_INFO(rclcpp::get_logger("StompPlanningContext"), "Getting PathSeed data...");
+  // サービスがavailableになるまで待機（最大3秒）
+  if (!get_path_seed_client_->wait_for_service(std::chrono::seconds(3))) {
+      RCLCPP_ERROR(rclcpp::get_logger("StompPlanningContext"), "GetPathSeedTrajectory service not available!");
+      return false;
+  }
+
+  // リクエスト送信
+  auto request = std::make_shared<path_reuse_method::srv::GetPathSeedTrajectory::Request>(); // 空のリクエストを作成
+  auto future = get_path_seed_client_->async_send_request(request);
+
+  // レスポンスを待機
+  auto status = future.wait_for(std::chrono::seconds(5));
+  if (status != std::future_status::ready) {
+    RCLCPP_ERROR(rclcpp::get_logger("StompPlanningContext"),
+                 "Timeout (or error) waiting for GetPathSeedTrajectory response");
+    return false;
+  }
+
+  // 結果取得
+  auto result = future.get();
+  if (!result) {
+      RCLCPP_ERROR(rclcpp::get_logger("StompPlanningContext"), "Service call failed");
+      return false;
+  }
+  RCLCPP_INFO(rclcpp::get_logger("StompPlanningContext"), "PathSeed data received successfully");
+
+  // path_seed_data_を更新
+  path_seed_rows_ = result->path_seed.rows;
+  path_seed_cols_ = result->path_seed.cols;
+  path_seed_data_.assign(result->path_seed.data.begin(), result->path_seed.data.end());
+
+  return true;
 }
 
 bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
 {
   // Start time
   auto time_start = std::chrono::steady_clock::now();
+  
+  Eigen::MatrixXd trajectory_data;
+  size_t num_joints = 6;  // ロボットによって変更
 
-  // カスタム軌道データの定義
-  double trajectory_array[] = {
+  RCLCPP_INFO(rclcpp::get_logger("StompPlanningContext"), "STOMP Planning Context: solve called");
+
+  // PathSeedデータを取得
+  if (!GetPathSeed()) {
+    RCLCPP_ERROR(rclcpp::get_logger("StompPlanningContext"), "Failed to get PathSeed data");
+    return false;
+  }
+
+  RCLCPP_INFO(rclcpp::get_logger("StompPlanningContext"), "PathSeed data received: %zu rows, %zu cols",
+                  path_seed_rows_, path_seed_cols_);
+
+  if (!path_seed_data_.empty() && path_seed_rows_ > 0 && path_seed_cols_ > 0) {
+    // 外部から受け取った値を使う
+    // データ数が正しいことも一応確認
+    if (path_seed_data_.size() != path_seed_rows_ * path_seed_cols_) {
+      // エラー処理
+      // ここでreturnや例外throwしてもOK
+      return false;
+    }
+    Eigen::Map<const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>
+        temp_data(path_seed_data_.data(), path_seed_rows_, path_seed_cols_);
+    trajectory_data = temp_data.transpose();
+    num_joints = trajectory_data.rows();
+
+    // デバッグ用の出力
+    RCLCPP_INFO(rclcpp::get_logger("StompPlanningContext"), "PathSeed data received with %zu rows and %zu columns", path_seed_rows_, path_seed_cols_);
+  } else {
+    // デフォルトのtrajectory_arrayを使う
+    double trajectory_array[] = {
       0.0253615, 0.00990554, -0.111783, 0.0776433, -0.0137638, -0.0539208,
       0.0396319, 0.017227, -0.223884, 0.155411, 0.0388611, -0.0250857,
       0.0484995, 0.0252098, -0.340112, 0.235977, 0.0883874, 0.00642416,
@@ -211,20 +333,19 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
       1.18619, 0.55145, -1.75061, 0.0893161, 1.07885, 1.1099,
       1.22443, 0.567554, -1.76845, 0.0436238, 1.14327, 1.18841,
       1.26089, 0.585129, -1.78918, -0.00100569, 1.20602, 1.27003
-  };
-  // 配列の要素数を計算
-  size_t trajectory_array_size = sizeof(trajectory_array) / sizeof(trajectory_array[0]);
-  // 関節数を定義
-  const size_t num_joints = 6;
-  // タイムステップ数を計算
-  size_t num_timesteps = trajectory_array_size / num_joints;
-  
-  // まず元の形式（タイムステップ×関節）でマッピングする
-  Eigen::Map<const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> 
-      temp_data(trajectory_array, num_timesteps, num_joints);
-      
-  // 行列を転置して関節×タイムステップの形式にする
-  Eigen::MatrixXd trajectory_data = temp_data.transpose();
+    };
+    // 配列の要素数を計算
+    size_t trajectory_array_size = sizeof(trajectory_array) / sizeof(trajectory_array[0]);
+    // タイムステップ数を計算
+    size_t num_timesteps = trajectory_array_size / num_joints;
+    
+    // まず元の形式（タイムステップ×関節）でマッピングする
+    Eigen::Map<const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> 
+        temp_data(trajectory_array, num_timesteps, num_joints);
+        
+    // 行列を転置して関節×タイムステップの形式にする
+    Eigen::MatrixXd trajectory_data = temp_data.transpose();
+  }
 
   // Response output
   auto& trajectory = res.trajectory_;
