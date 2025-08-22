@@ -47,9 +47,9 @@ createTrajectoryMarkerArray(const robot_trajectory::RobotTrajectory& robot_traje
   sphere_marker.type = visualization_msgs::msg::Marker::SPHERE;
   sphere_marker.action = visualization_msgs::msg::Marker::ADD;
   sphere_marker.lifetime = rclcpp::Duration(0, 0);  // Infinite lifetime
-  sphere_marker.scale.x = 0.01;
-  sphere_marker.scale.y = 0.01;
-  sphere_marker.scale.z = 0.01;
+  sphere_marker.scale.x = 0.015;
+  sphere_marker.scale.y = 0.015;
+  sphere_marker.scale.z = 0.015;
   sphere_marker.color = color;
   sphere_marker.frame_locked = false;
 

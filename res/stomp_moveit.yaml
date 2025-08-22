@@ -101,3 +101,8 @@ stomp_moveit:
       description: "Name of the topic RVIZ subscribes to to visualize the EE path",
       default_value: "stomp_trajectory",
     }
+  use_custom_trajectory: {
+    type: bool, 
+    description: "Use custom trajectory instead of linear interpolation", 
+    default_value: false,
+  }

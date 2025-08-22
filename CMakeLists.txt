@@ -14,12 +14,15 @@ find_package(std_msgs REQUIRED)
 find_package(stomp REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(tf2_eigen REQUIRED)
+find_package(path_reuse_method REQUIRED)
 
 generate_parameter_library(stomp_moveit_parameters res/stomp_moveit.yaml)
 
 include_directories(stomp_moveit PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>)
+$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+$<INSTALL_INTERFACE:include>
+)
+include_directories(${path_reuse_method_INCLUDE_DIRS})
 
 # Planner Plugin
 add_library(stomp_moveit_plugin SHARED
@@ -32,6 +35,7 @@ ament_target_dependencies(stomp_moveit_plugin
   std_msgs
   tf2_eigen
   visualization_msgs
+  path_reuse_method
 )
 target_link_libraries(stomp_moveit_plugin stomp::stomp stomp_moveit_parameters)
 
@@ -46,18 +50,24 @@ install(TARGETS stomp_moveit_plugin stomp_moveit_parameters
 )
 
 # Demo Executable
-add_executable(stomp_moveit_example src/stomp_moveit_example.cpp)
-ament_target_dependencies(stomp_moveit_example
-  moveit_core
-  moveit_visual_tools
-  std_msgs
-  tf2_eigen
-  visualization_msgs
-)
-target_link_libraries(stomp_moveit_example stomp::stomp)
+# add_executable(stomp_moveit_example src/stomp_moveit_example.cpp)
+# ament_target_dependencies(stomp_moveit_example
+#   moveit_core
+#   moveit_visual_tools
+#   std_msgs
+#   tf2_eigen
+#   visualization_msgs
+# )
 
-install(TARGETS stomp_moveit_example
-  DESTINATION lib/${PROJECT_NAME})
+# target_link_libraries(stomp_moveit_example
+#   stomp::stomp
+#   stomp_moveit_parameters
+#   path_reuse_method::path_reuse_method
+# )
+
+# install(TARGETS stomp_moveit_example
+#   DESTINATION lib/${PROJECT_NAME}
+# )
 
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 
