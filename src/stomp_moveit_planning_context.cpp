@@ -1,5 +1,10 @@
 #include <atomic>
 #include <future>
+#include <fstream>
+#include <iomanip>
+#include <chrono>
+#include <ctime>
+#include <filesystem>
 
 #include <stomp/stomp.h>
 #include <rclcpp/executors/single_threaded_executor.hpp>
@@ -26,9 +31,14 @@ bool solveWithStomp(const std::shared_ptr<stomp::Stomp>& stomp, const moveit::co
 {
   Eigen::MatrixXd waypoints;
   const auto& joints = group->getActiveJointModels();
+  
+  // スタートとゴールの関節位置を取得
+  auto start_positions = get_positions(start_state, joints);
+  auto goal_positions = get_positions(goal_state, joints);
+  
   bool success;
   if (!input_trajectory || input_trajectory->empty()) // input_trajectoryがnullか空でないとき
-    success = stomp->solve(get_positions(start_state, joints), get_positions(goal_state, joints), waypoints); // スタートとゴールの線形補間
+    success = stomp->solve(start_positions, goal_positions, waypoints); // スタートとゴールの線形補間
   else
   {
     auto input = robot_trajectory_to_matrix(*input_trajectory);
@@ -388,6 +398,20 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
 
   // STOMP config, task, planner instance
   const auto group = getPlanningScene()->getRobotModel()->getJointModelGroup(getGroupName());
+
+  // Start/goal joint positions logging
+  const auto joint_names = group->getActiveJointModelNames();
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "スタート関節位置:");
+  for (const auto& name : joint_names)
+  {
+    RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  %s: %f", name.c_str(), start_state.getVariablePosition(name));
+  }
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "ゴール関節位置:");
+  for (const auto& name : joint_names)
+  {
+    RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  %s: %f", name.c_str(), goal_state.getVariablePosition(name));
+  }
+
   auto config = getStompConfig(params_, group->getActiveJointModels().size() /* num_dimensions */);
   robot_trajectory::RobotTrajectoryPtr input_trajectory; // input_trajectoryという軌道を格納する変数を定義
   
@@ -430,6 +454,17 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
         timeout_future.valid() && timeout_future.wait_for(std::chrono::nanoseconds(1)) == std::future_status::ready;
     result_code =
         timed_out ? moveit_msgs::msg::MoveItErrorCodes::TIMED_OUT : moveit_msgs::msg::MoveItErrorCodes::PLANNING_FAILED;
+  }
+  else
+  {
+    // プランニング成功時に軌道をtxtファイルに保存
+    const auto& joint_names = group->getActiveJointModelNames();
+    
+    // プランニングタイムを計算
+    std::chrono::duration<double> elapsed_seconds = std::chrono::steady_clock::now() - time_start;
+    double current_planning_time = elapsed_seconds.count();
+    
+    saveTrajectoryToFile(*trajectory, joint_names, current_planning_time);
   }
   stomp_.reset();
   {
@@ -526,5 +561,43 @@ bool StompPlanningContext::setCustomTrajectory(const Eigen::MatrixXd& trajectory
   }
 
   return !input_trajectory->empty();
+}
+
+void StompPlanningContext::saveTrajectoryToFile(const robot_trajectory::RobotTrajectory& trajectory, const std::vector<std::string>& joint_names, double planning_time)
+{
+  // resultフォルダを作成（存在しない場合）
+  std::string result_dir = "../result";
+  std::filesystem::create_directories(result_dir);
+  
+  std::string filename = result_dir + "/stomp_trajectory_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ".txt";
+  std::ofstream file(filename);
+
+  if (!file.is_open()) {
+    RCLCPP_ERROR(rclcpp::get_logger("StompPlanningContext"), "Failed to open file for saving trajectory: %s", filename.c_str());
+    return;
+  }
+
+  // 最初の行にプランニングタイムを記録
+  file << "Planning Time: " << planning_time << " seconds" << std::endl;
+
+  // 2行目に軌道データのサイズを記録
+  file << "Trajectory Size: " << trajectory.getWayPointCount() << " waypoints, " << joint_names.size() << " joints" << std::endl;
+
+  // 軌道データをn行6列のカンマ区切り形式で保存
+  for (std::size_t i = 0; i < trajectory.getWayPointCount(); ++i) {
+    const auto& waypoint = trajectory.getWayPoint(i);
+    file << "[";
+    for (size_t j = 0; j < joint_names.size(); ++j) {
+      double value = waypoint.getVariablePosition(joint_names[j]);
+      file << value;
+      if (j < joint_names.size() - 1) {
+        file << ", ";
+      }
+    }
+    file << "]" << std::endl;
+  }
+  
+  file.close();
+  RCLCPP_INFO(rclcpp::get_logger("StompPlanningContext"), "Trajectory saved to file: %s", filename.c_str());
 }
 }

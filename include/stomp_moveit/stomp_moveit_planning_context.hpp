@@ -43,6 +43,9 @@ public:
   // PathSeedリクエストを処理する関数
   bool GetPathSeed();
 
+  // 軌道をtxtファイルに保存する関数
+  void saveTrajectoryToFile(const robot_trajectory::RobotTrajectory& trajectory, const std::vector<std::string>& joint_names, double planning_time);
+
   // PathSeedを取得するための定義
   rclcpp::Node::SharedPtr client_node_; // クライアントノードへのポインタ
   rclcpp::CallbackGroup::SharedPtr cbg_; // コールバックグループへのポインタ
