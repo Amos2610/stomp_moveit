@@ -14,7 +14,7 @@ find_package(std_msgs REQUIRED)
 find_package(stomp REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(tf2_eigen REQUIRED)
-find_package(path_reuse_method REQUIRED)
+find_package(path_reuse_method_interfaces REQUIRED)
 
 generate_parameter_library(stomp_moveit_parameters res/stomp_moveit.yaml)
 
@@ -22,7 +22,7 @@ include_directories(stomp_moveit PUBLIC
 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 $<INSTALL_INTERFACE:include>
 )
-include_directories(${path_reuse_method_INCLUDE_DIRS})
+include_directories(${path_reuse_method_interfaces_INCLUDE_DIRS})
 
 # Planner Plugin
 add_library(stomp_moveit_plugin SHARED
@@ -35,7 +35,7 @@ ament_target_dependencies(stomp_moveit_plugin
   std_msgs
   tf2_eigen
   visualization_msgs
-  path_reuse_method
+  path_reuse_method_interfaces
 )
 target_link_libraries(stomp_moveit_plugin stomp::stomp stomp_moveit_parameters)
 
@@ -62,7 +62,7 @@ install(TARGETS stomp_moveit_plugin stomp_moveit_parameters
 # target_link_libraries(stomp_moveit_example
 #   stomp::stomp
 #   stomp_moveit_parameters
-#   path_reuse_method::path_reuse_method
+#   path_reuse_method_interfaces::path_reuse_method_interfaces
 # )
 
 # install(TARGETS stomp_moveit_example

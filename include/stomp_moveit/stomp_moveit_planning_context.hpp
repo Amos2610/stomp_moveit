@@ -2,7 +2,7 @@
 
 #include <moveit/planning_interface/planning_interface.h>
 #include <stomp_moveit/stomp_moveit_parameters.hpp>
-#include "path_reuse_method/srv/get_path_seed_trajectory.hpp"
+#include "path_reuse_method_interfaces/srv/get_path_seed_trajectory.hpp"
 
 
 // Forward declaration
@@ -51,7 +51,7 @@ public:
   rclcpp::CallbackGroup::SharedPtr cbg_; // コールバックグループへのポインタ
   std::shared_ptr<rclcpp::executors::SingleThreadedExecutor> exec_; // Executorへのポインタ
   std::thread exec_thread_; // Executorを実行するためのスレッド
-  rclcpp::Client<path_reuse_method::srv::GetPathSeedTrajectory>::SharedPtr get_path_seed_client_; // PathSeedを取得するためのサービスクライアント
+  rclcpp::Client<path_reuse_method_interfaces::srv::GetPathSeedTrajectory>::SharedPtr get_path_seed_client_; // PathSeedを取得するためのサービスクライアント
 
 private:
   const stomp_moveit::Params params_;

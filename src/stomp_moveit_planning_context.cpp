@@ -20,7 +20,7 @@
 
 #include <moveit/constraint_samplers/constraint_sampler_manager.h>
 #include <moveit/robot_state/conversions.h>
-#include "path_reuse_method/srv/get_path_seed_trajectory.hpp"
+#include "path_reuse_method_interfaces/srv/get_path_seed_trajectory.hpp"
 
 namespace stomp_moveit
 {
@@ -233,7 +233,7 @@ StompPlanningContext::StompPlanningContext(const std::string& name, const std::s
 
   // サービスクライアントをクライアントノード上で作成
   get_path_seed_client_ =
-      client_node_->create_client<path_reuse_method::srv::GetPathSeedTrajectory>(
+      client_node_->create_client<path_reuse_method_interfaces::srv::GetPathSeedTrajectory>(
           "/get_path_seed_trajectory",
           rmw_qos_profile_services_default,
           cbg_);
@@ -267,7 +267,7 @@ bool StompPlanningContext::GetPathSeed()
   }
 
   // リクエスト送信
-  auto request = std::make_shared<path_reuse_method::srv::GetPathSeedTrajectory::Request>(); // 空のリクエストを作成
+  auto request = std::make_shared<path_reuse_method_interfaces::srv::GetPathSeedTrajectory::Request>(); // 空のリクエストを作成
   auto future = get_path_seed_client_->async_send_request(request);
 
   // レスポンスを待機
