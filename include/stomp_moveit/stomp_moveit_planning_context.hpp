@@ -46,6 +46,15 @@ public:
   // 軌道をtxtファイルに保存する関数
   void saveTrajectoryToFile(const robot_trajectory::RobotTrajectory& trajectory, const std::vector<std::string>& joint_names, double planning_time);
 
+  // カスタム軌道の状態を確認
+  bool hasCustomTrajectory() const { return custom_trajectory_ != nullptr; }
+  
+  // カスタム軌道を取得
+  const robot_trajectory::RobotTrajectoryPtr& getCustomTrajectory() const { return custom_trajectory_; }
+  
+  // カスタム軌道を設定
+  void setCustomTrajectory(const robot_trajectory::RobotTrajectoryPtr& trajectory) { custom_trajectory_ = trajectory; }
+
   // PathSeedを取得するための定義
   rclcpp::Node::SharedPtr client_node_; // クライアントノードへのポインタ
   rclcpp::CallbackGroup::SharedPtr cbg_; // コールバックグループへのポインタ
@@ -64,5 +73,8 @@ private:
   std::vector<double> path_seed_data_;
   size_t path_seed_rows_ = 0;
   size_t path_seed_cols_ = 0;
+  
+  // カスタム軌道を保存するための変数
+  robot_trajectory::RobotTrajectoryPtr custom_trajectory_;
 };
 }  // namespace stomp_moveit

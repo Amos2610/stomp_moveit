@@ -105,6 +105,49 @@ bool extractSeedTrajectory(const planning_interface::MotionPlanRequest& req,    
   return !seed->empty();
 }
 
+// カスタム軌道の変化量に基づいてstddevを動的に調整する関数
+std::vector<double> calculateAdaptiveStddev(const robot_trajectory::RobotTrajectory& trajectory, 
+                                           const std::vector<std::string>& joint_names,
+                                           double scaling_factor = 0.5,
+                                           double min_stddev = 0.1,
+                                           double max_stddev = 2.0)
+{
+  const size_t num_joints = joint_names.size();
+  std::vector<double> stddev(num_joints);
+  
+  if (trajectory.empty()) {
+    // 軌道が空の場合はデフォルト値
+    std::fill(stddev.begin(), stddev.end(), 1.0);
+    return stddev;
+  }
+  
+  // スタートとゴールの関節角度を取得
+  const auto& start_state = trajectory.getFirstWayPoint();
+  const auto& goal_state = trajectory.getLastWayPoint();
+  
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "ーーーーーーーーーーーーーーーーーーーーーー");
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "カスタム軌道の変化量分析:");
+  
+  for (size_t i = 0; i < num_joints; ++i) {
+    double start_pos = start_state.getVariablePosition(joint_names[i]);
+    double goal_pos = goal_state.getVariablePosition(joint_names[i]);
+    double delta_q = std::abs(goal_pos - start_pos);
+    
+    // 変化量に基づいてstddevを計算
+    double raw_stddev = scaling_factor * delta_q;
+    
+    // 上限・下限でクリップ
+    stddev[i] = std::clamp(raw_stddev, min_stddev, max_stddev);
+    
+    RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), 
+                "  Joint %s: Δq=%.4f, raw_stddev=%.4f, final_stddev=%.4f", 
+                joint_names[i].c_str(), delta_q, raw_stddev, stddev[i]);
+  }
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "ーーーーーーーーーーーーーーーーーーーーーー");
+  
+  return stddev;
+}
+
 stomp::TaskPtr createStompTask(const stomp::StompConfiguration& config, StompPlanningContext& context)
 {
   const size_t num_timesteps = config.num_timesteps;
@@ -138,15 +181,35 @@ stomp::TaskPtr createStompTask(const stomp::StompConfiguration& config, StompPla
   
   // 関節数に合わせてstddevを調整
   const size_t num_joints = group->getActiveJointModels().size();
-  stddev.resize(num_joints, 1.0); // デフォルト値で初期化
+  const auto& joint_names = group->getActiveJointModelNames();
   
-  // 各関節のstddevパラメータを取得
-  if (num_joints > 0) stddev[0] = params.stddev_joint_0;
-  if (num_joints > 1) stddev[1] = params.stddev_joint_1;
-  if (num_joints > 2) stddev[2] = params.stddev_joint_2;
-  if (num_joints > 3) stddev[3] = params.stddev_joint_3;
-  if (num_joints > 4) stddev[4] = params.stddev_joint_4;
-  if (num_joints > 5) stddev[5] = params.stddev_joint_5;
+  // 適応的stddev計算の使用フラグ（ハードコード）
+  bool use_adaptive_stddev = true;  // true: 適応的計算を使用, false: デフォルト設定を使用
+  
+  // カスタム軌道が利用可能で、適応的調整が有効な場合のみ適応的調整を使用
+  if (context.hasCustomTrajectory() && use_adaptive_stddev) {
+    const auto& custom_trajectory = context.getCustomTrajectory();
+    stddev = calculateAdaptiveStddev(*custom_trajectory, joint_names, 
+                                    0.5,  // scaling_factor
+                                    0.1,  // min_stddev
+                                    2.0); // max_stddev
+    RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "適応的stddev計算を使用します");
+  } else {
+    // デフォルトのstddev設定
+    stddev.resize(num_joints, 1.0);
+    if (num_joints > 0) stddev[0] = params.stddev_joint_0;
+    if (num_joints > 1) stddev[1] = params.stddev_joint_1;
+    if (num_joints > 2) stddev[2] = params.stddev_joint_2;
+    if (num_joints > 3) stddev[3] = params.stddev_joint_3;
+    if (num_joints > 4) stddev[4] = params.stddev_joint_4;
+    if (num_joints > 5) stddev[5] = params.stddev_joint_5;
+    
+    if (context.hasCustomTrajectory()) {
+      RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "カスタム軌道は利用可能ですが、適応的stddev計算は無効です");
+    } else {
+      RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "デフォルトのstddev設定を使用します");
+    }
+  }
   
   // stddevパラメータをログ出力
   RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "ーーーーーーーーーーーーーーーーーーーーーー");
@@ -183,17 +246,6 @@ stomp::StompConfiguration getStompConfig(const stomp_moveit::Params& params, siz
   config.num_rollouts = params.num_rollouts;
   config.max_rollouts = params.max_rollouts;
   config.control_cost_weight = params.control_cost_weight;
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "ーーーーーーーーーーーーーーーーーーーーーー");
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "設定中のパラメータ:");
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Num Iterations: %d",                 config.num_iterations);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Num Iterations After Valid: %d",     config.num_iterations_after_valid);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Num Timesteps: %d",                  config.num_timesteps);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Delta T: %f",                        config.delta_t);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Exponentiated Cost Sensitivity: %f", config.exponentiated_cost_sensitivity);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Num Rollouts: %d",                   config.num_rollouts);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Max Rollouts: %d",                   config.max_rollouts);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Control Cost Weight: %f",            config.control_cost_weight);
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "ーーーーーーーーーーーーーーーーーーーーーー");
 
   return config;
 }
@@ -413,6 +465,19 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
   }
 
   auto config = getStompConfig(params_, group->getActiveJointModels().size() /* num_dimensions */);
+
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "ーーーーーーーーーーーーーーーーーーーーーー");
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "設定パラメータ:");
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Num Iterations: %d", config.num_iterations);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Num Iterations After Valid: %d", config.num_iterations_after_valid);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Num Timesteps: %d", config.num_timesteps);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Delta T: %f", config.delta_t);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Exponentiated Cost Sensitivity: %f", config.exponentiated_cost_sensitivity);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Num Rollouts: %d", config.num_rollouts);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Max Rollouts: %d", config.max_rollouts);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "  Control Cost Weight: %f", config.control_cost_weight);
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "ーーーーーーーーーーーーーーーーーーーーーー");
+  
   robot_trajectory::RobotTrajectoryPtr input_trajectory; // input_trajectoryという軌道を格納する変数を定義
   
   // カスタム軌道使用フラグ（falseに設定するとカスタム軌道を使用しない = sとgの線形補間）
@@ -424,13 +489,23 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
                   use_custom_trajectory ? "有効" : "無効");
   }
 
+  // 軌道保存の使用フラグ（ハードコード）
+  bool save_trajectory_enabled = false;  // true: 軌道を保存, false: 軌道保存をスキップ
+
   if (use_custom_trajectory && setCustomTrajectory(trajectory_data, input_trajectory))
   {
     RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "Custom trajectoryが設定されました!!!!!!!!!!!!!");
     config.num_timesteps = input_trajectory->size();
+    
+    // カスタム軌道を保存（適応的stddev計算用）
+    setCustomTrajectory(input_trajectory);
   }
   else if (extractSeedTrajectory(request_, getPlanningScene()->getRobotModel(), input_trajectory))
+  {
     config.num_timesteps = input_trajectory->size();
+    // シード軌道の場合はカスタム軌道をクリア
+    setCustomTrajectory(nullptr);
+  }
   const auto task = createStompTask(config, *this);
   stomp_ = std::make_shared<stomp::Stomp>(config, task);
 
@@ -457,14 +532,19 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
   }
   else
   {
-    // プランニング成功時に軌道をtxtファイルに保存
-    const auto& joint_names = group->getActiveJointModelNames();
-    
-    // プランニングタイムを計算
-    std::chrono::duration<double> elapsed_seconds = std::chrono::steady_clock::now() - time_start;
-    double current_planning_time = elapsed_seconds.count();
-    
-    saveTrajectoryToFile(*trajectory, joint_names, current_planning_time);
+    if (save_trajectory_enabled) {
+      // プランニング成功時に軌道をtxtファイルに保存
+      const auto& joint_names = group->getActiveJointModelNames();
+      
+      // プランニングタイムを計算
+      std::chrono::duration<double> elapsed_seconds = std::chrono::steady_clock::now() - time_start;
+      double current_planning_time = elapsed_seconds.count();
+      
+      saveTrajectoryToFile(*trajectory, joint_names, current_planning_time);
+      RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "軌道がファイルに保存されました");
+    } else {
+      RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "軌道のファイル保存がスキップされました");
+    }
   }
   stomp_.reset();
   {
