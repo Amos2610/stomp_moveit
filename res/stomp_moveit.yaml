@@ -3,7 +3,7 @@ stomp_moveit:
     {
       type: int,
       description: "Total number of iterations that STOMP is allowed to run",
-      default_value: 100,
+      default_value: 200,
       validation: { rsl::gt_eq<>: [1] },
     }
   num_iterations_after_valid:
@@ -17,21 +17,21 @@ stomp_moveit:
     {
       type: int,
       description: "Number of noisy trajectories that are being generated for each iteration",
-      default_value: 15,
+      default_value: 30,
       validation: { rsl::gt_eq<>: [1] },
     }
   max_rollouts:
     {
       type: int,
       description: "Combined number of old and new rollouts that are being processed for each iteration",
-      default_value: 25,
+      default_value: 30,
       validation: { rsl::gt_eq<>: [1] },
     }
   num_timesteps:
     {
       type: int,
       description: "【初期軌道を与える場合、このパラメータは関係ない】Number of timesteps used in trajectories - corresponds to waypoint count",
-      default_value: 40,
+      default_value: 60,
       validation: { rsl::gt_eq<>: [3] },
     }
   exponentiated_cost_sensitivity:
