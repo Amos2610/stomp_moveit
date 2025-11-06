@@ -105,11 +105,11 @@ bool extractSeedTrajectory(const planning_interface::MotionPlanRequest& req,    
   return !seed->empty();
 }
 
-// カスタム軌道の変化量に基づいてstddevを動的に調整する関数
+// 論文の式(20)に基づく適応的stddev計算関数（全ウェイポイント間距離総和）
 std::vector<double> calculateAdaptiveStddev(const robot_trajectory::RobotTrajectory& trajectory, 
                                            const std::vector<std::string>& joint_names,
                                            double scaling_factor = 0.5,
-                                           double min_stddev = 0.1,
+                                           double min_stddev = 0.005,
                                            double max_stddev = 2.0)
 {
   const size_t num_joints = joint_names.size();
@@ -121,27 +121,35 @@ std::vector<double> calculateAdaptiveStddev(const robot_trajectory::RobotTraject
     return stddev;
   }
   
-  // スタートとゴールの関節角度を取得
-  const auto& start_state = trajectory.getFirstWayPoint();
-  const auto& goal_state = trajectory.getLastWayPoint();
+  const size_t num_waypoints = trajectory.getWayPointCount();
+  if (num_waypoints < 2) {
+    // ウェイポイントが1つ以下の場合は最小値を設定
+    std::fill(stddev.begin(), stddev.end(), min_stddev);
+    return stddev;
+  }
   
   RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "ーーーーーーーーーーーーーーーーーーーーーー");
-  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "カスタム軌道の変化量分析:");
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "論文ベース適応的stddev計算（全ウェイポイント間距離総和）:");
+  RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "軌道ウェイポイント数: %zu", num_waypoints);
   
   for (size_t i = 0; i < num_joints; ++i) {
-    double start_pos = start_state.getVariablePosition(joint_names[i]);
-    double goal_pos = goal_state.getVariablePosition(joint_names[i]);
-    double delta_q = std::abs(goal_pos - start_pos);
+    // 論文の式(20): 全ウェイポイント間の距離総和を計算
+    double total_variation = 0.0;
+    for (size_t m = 0; m < num_waypoints - 1; ++m) {
+      double current_pos = trajectory.getWayPoint(m).getVariablePosition(joint_names[i]);
+      double next_pos = trajectory.getWayPoint(m + 1).getVariablePosition(joint_names[i]);
+      total_variation += std::abs(next_pos - current_pos);
+    }
     
-    // 変化量に基づいてstddevを計算
-    double raw_stddev = scaling_factor * delta_q;
+    // 論文の式(21): スケーリング係数を適用
+    double raw_stddev = scaling_factor * total_variation;
     
-    // 上限・下限でクリップ
+    // 論文の式(22): 上限・下限でクリップ
     stddev[i] = std::clamp(raw_stddev, min_stddev, max_stddev);
     
     RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), 
-                "  Joint %s: Δq=%.4f, raw_stddev=%.4f, final_stddev=%.4f", 
-                joint_names[i].c_str(), delta_q, raw_stddev, stddev[i]);
+                "  Joint %s: total_variation=%.4f, raw_stddev=%.4f, final_stddev=%.4f", 
+                joint_names[i].c_str(), total_variation, raw_stddev, stddev[i]);
   }
   RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "ーーーーーーーーーーーーーーーーーーーーーー");
   
@@ -190,9 +198,9 @@ stomp::TaskPtr createStompTask(const stomp::StompConfiguration& config, StompPla
   if (context.hasCustomTrajectory() && use_adaptive_stddev) {
     const auto& custom_trajectory = context.getCustomTrajectory();
     stddev = calculateAdaptiveStddev(*custom_trajectory, joint_names, 
-                                    0.5,  // scaling_factor
-                                    0.1,  // min_stddev
-                                    2.0); // max_stddev
+                                    0.5,   // scaling_factor
+                                    0.005, // min_stddev (論文ベース実装)
+                                    2.0);  // max_stddev
     RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "適応的stddev計算を使用します");
   } else {
     // デフォルトのstddev設定
@@ -480,12 +488,15 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
   
   robot_trajectory::RobotTrajectoryPtr input_trajectory; // input_trajectoryという軌道を格納する変数を定義
   
-  // カスタム軌道使用フラグ（falseに設定するとカスタム軌道を使用しない = sとgの線形補間）
-  bool use_custom_trajectory = false;
+  // カスタム軌道使用フラグ（ROSパラメータで制御）
+  bool use_custom_trajectory = false;  // デフォルト値（パラメータ未設定時）
   std::vector<rclcpp::Parameter> params = node_->get_parameters({"stomp.use_custom_trajectory"});
   if (!params.empty()) {
       use_custom_trajectory = params[0].as_bool();
-      RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "カスタム軌道の使用設定: %s",
+      RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "カスタム軌道の使用設定（パラメータ）: %s",
+                  use_custom_trajectory ? "有効" : "無効");
+  } else {
+      RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"), "カスタム軌道の使用設定（デフォルト）: %s",
                   use_custom_trajectory ? "有効" : "無効");
   }
 
