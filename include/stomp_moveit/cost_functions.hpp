@@ -101,8 +101,12 @@ CostFn get_cost_function_from_state_validator(const StateValidatorFn state_valid
       for (auto j = std::max(0l, start - static_cast<long>(sigma));
            j <= std::min(values.cols() - 1, end + static_cast<long>(sigma)); ++j)
       {
+        // [FIX 2026-07-23] ガウス正規化定数の誤記 sqrt(2*mu) → sqrt(2*M_PI)。
+        // 旧コードは無効ウィンドウが (start=0, end=0) のとき mu=0 で0除算 → コストが Inf 化し、
+        // 全ロールアウトが同一timestepでInfになると libstomp の正規化で denom=Inf-Inf=NaN →
+        // 最適化軌道全体がNaN化 → FCLでSIGSEGV、という連鎖の起点だった。
         costs(j) +=
-            std::exp(-std::pow(j - mu, 2) / (2 * std::pow(sigma, 2))) / (sigma * std::sqrt(2 * mu)) * window_size;
+            std::exp(-std::pow(j - mu, 2) / (2 * std::pow(sigma, 2))) / (sigma * std::sqrt(2 * M_PI)) * window_size;
       }
     }
 
@@ -129,8 +133,18 @@ CostFn get_collision_cost_function(const std::shared_ptr<const planning_scene::P
   const auto& joints = group ? group->getActiveJointModels() : planning_scene->getRobotModel()->getActiveJointModels();
   const auto& group_name = group ? group->getName() : "";
 
-  StateValidatorFn collision_validator_fn = [=](const Eigen::VectorXd& positions) {
-    static moveit::core::RobotState state(planning_scene->getCurrentState());
+  // NOTE(2026-07-23 fumoto/claude): `static` RobotState shared across all solves/threads caused
+  // use of stale state and a segfault in FCL self-collision (DynamicAABBTreeCollisionManager::registerObjects).
+  // Fixed by giving each validator instance its own copy via init-capture (matches upstream MoveIt fix).
+  StateValidatorFn collision_validator_fn = [=, state = planning_scene->getCurrentState()](const Eigen::VectorXd& positions) mutable {
+    // [DEBUG-GUARD 2026-07-23] FCLセグフォ切り分け: 非有限な関節値が来ていないか検査。
+    // 来ていた場合はログして「衝突扱い」で棄却する（クラッシュ回避＋証拠収集）。
+    if (!positions.allFinite())
+    {
+      RCLCPP_ERROR(rclcpp::get_logger("stomp_moveit"),
+                   "[DEBUG-GUARD] non-finite joint positions passed to collision validator!");
+      return false;
+    }
 
     // Update robot state values
     set_joint_positions(positions, joints, state);
@@ -164,9 +178,8 @@ CostFn get_constraints_cost_function(const std::shared_ptr<const planning_scene:
   kinematic_constraints::KinematicConstraintSet constraints_set(planning_scene->getRobotModel());
   constraints_set.add(constraints_msg, planning_scene->getTransforms());
 
-  StateValidatorFn constraints_validator_fn = [=, constraints =
-                                                      std::move(constraints_set)](const Eigen::VectorXd& positions) {
-    static moveit::core::RobotState state(planning_scene->getCurrentState());
+  StateValidatorFn constraints_validator_fn = [=, constraints = std::move(constraints_set),
+                                               state = planning_scene->getCurrentState()](const Eigen::VectorXd& positions) mutable {
 
     // Update robot state values
     set_joint_positions(positions, joints, state);
