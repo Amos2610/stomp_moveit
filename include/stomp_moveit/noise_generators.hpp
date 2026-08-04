@@ -51,6 +51,15 @@ NoiseGeneratorFn get_normal_distribution_generator(size_t num_timesteps, std::ve
   auto raw_noise = std::make_shared<Eigen::VectorXd>(num_timesteps);
   NoiseGeneratorFn noise_generator_fn = [=](const Eigen::MatrixXd& values, Eigen::MatrixXd& noisy_values,
                                             Eigen::MatrixXd& noise) {
+    // [DEBUG-GUARD 2026-07-23] NaN発生源の切り分け:
+    // ここに来る values は STOMP の「最適化中軌道」。これが非有限なら、
+    // libstomp 側の確率重み正規化（全ロールアウト無効時の0除算）が原因と確定する。
+    if (!values.allFinite())
+    {
+      RCLCPP_ERROR(rclcpp::get_logger("stomp_moveit"),
+                   "[DEBUG-GUARD] STOMP optimized parameters became non-finite "
+                   "(likely degenerate probability normalization in libstomp)");
+    }
     for (int i = 0; i < values.rows(); ++i)
     {
       rand_generators[i]->sample(*raw_noise);
