@@ -511,6 +511,19 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
     // カスタム軌道を保存（適応的stddev計算用）
     setCustomTrajectory(input_trajectory);
   }
+  else if (use_custom_trajectory)
+  {
+    // パスシードの使用が要求されているのにシードが無い（空）か次元が合わない。
+    // 以前は ERROR を出した後に線形補間の初期軌道で計画を続けていたため、
+    // 「検証済みシードに接地された動作」の外で計画が通っていた。
+    // 黙って落とさず、計画失敗（E-seed: シード未被覆）として返す。
+    RCLCPP_ERROR(rclcpp::get_logger("stomp_moveit"),
+                 "path seed requested (stomp.use_custom_trajectory=true) but no usable seed "
+                 "(rows=%zu, cols=%zu); refusing to plan without a seed",
+                 path_seed_rows_, path_seed_cols_);
+    res.error_code_.val = moveit_msgs::msg::MoveItErrorCodes::PLANNING_FAILED;
+    return false;
+  }
   else if (extractSeedTrajectory(request_, getPlanningScene()->getRobotModel(), input_trajectory))
   {
     config.num_timesteps = input_trajectory->size();
