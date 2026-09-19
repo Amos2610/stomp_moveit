@@ -46,16 +46,12 @@ bool solveWithStomp(const std::shared_ptr<stomp::Stomp>& stomp, const moveit::co
     // seed の両端を、要求された start / goal で上書きしてから最適化する。
     //
     // seed は「経路の形」のヒントであって、始点と終点を決め直すものではない。
-    // この分岐は start_positions を STOMP へ一度も渡さないため、上書きしないと
-    // seed の先頭（PathSeed デコーダが再構成した概算値）がそのまま計画の始点に
-    // なる。STOMP は入力の両端を保つので、そのずれは出力にそのまま残る。
-    //
-    // 実測 2026-08-27（NEX10・pathseed 使用、ロボアプリ版 3a4644d）: 計画された軌道の
-    // 先頭が現在姿勢から 6 軸すべてで 0.13〜0.46 度ずれ、MoveIt の実行前検証
-    // (allowed_start_tolerance 0.01 rad = 0.57 度) が
-    //   Invalid Trajectory: start point deviates from current robot state
-    // で毎回止めていた。seed を使わない上の分岐では start_positions を明示して
-    // いるのでこの問題は起きない。
+    // この分岐は start_positions を STOMP へ渡さないため、上書きしないと seed の先頭
+    // （デコーダが再構成した概算値）がそのまま計画の始点になる。STOMP は入力の両端を
+    // 保つので、現在姿勢とのずれは出力に残り、MoveIt の実行前検証
+    // （allowed_start_tolerance）が「start point deviates from current robot state」で
+    // 実行を止める。seed を使わない上の分岐では start_positions を明示しているので
+    // この問題は起きない。
     if (input.cols() > 0 && static_cast<size_t>(input.rows()) == start_positions.size() &&
         start_positions.size() == goal_positions.size())
     {
@@ -77,16 +73,15 @@ bool solveWithStomp(const std::shared_ptr<stomp::Stomp>& stomp, const moveit::co
   {
     // 解いた軌道の両端を、要求された start / goal に戻す。
     //
-    // STOMP は最適化なので、入力の両端を与えても出力ではそこから動く。実測
-    // 2026-08-27（NEX10・pathseed 使用）: seed の両端を start / goal で固定して
-    // なお、出力の先頭が現在姿勢から最大 0.32 度ずれた（固定前は 0.46 度）。
+    // STOMP は最適化なので、入力の両端を与えても出力の端点は平滑化でわずかに動く。
+    // MoveIt の約束は「返す計画は要求された開始状態から始まる」であり、ずれたまま
+    // 返すのは planner 側の契約違反になる。許容値を緩める対処は取らない（別の姿勢用の
+    // 軌道をそのまま走らせる方向で、検証の意味が無くなる）。隣り合う点の間隔に比べて
+    // 戻す量は小さいので、段差は通常の刻みの範囲に収まる。
     //
-    // MoveIt の約束は「返す計画は要求された開始状態から始まる」であり、
-    // ずれたまま返すのは planner 側の契約違反。**許容値を緩める対処は取らない**。
-    //
-    // ここでの上書きは STOMP の衝突コスト評価の後に行われる。上書きした端点が
-    // 衝突していないことは呼び出し側（StompPlanningContext::solve）が再検査する。
-    // 上書きで動かした量は最大値をログに残す（実験の記録用）。
+    // この上書きは STOMP の衝突コスト評価の後に行われる。上書きした端点が衝突して
+    // いないことは呼び出し側（StompPlanningContext::solve）が再検査する。
+    // 戻した量の最大値はログに残す。
     if (waypoints.cols() > 0 && static_cast<size_t>(waypoints.rows()) == start_positions.size() &&
         start_positions.size() == goal_positions.size())
     {
