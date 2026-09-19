@@ -42,15 +42,98 @@ bool solveWithStomp(const std::shared_ptr<stomp::Stomp>& stomp, const moveit::co
   else
   {
     auto input = robot_trajectory_to_matrix(*input_trajectory);
+
+    // seed の両端を、要求された start / goal で上書きしてから最適化する。
+    //
+    // seed は「経路の形」のヒントであって、始点と終点を決め直すものではない。
+    // この分岐は start_positions を STOMP へ渡さないため、上書きしないと seed の先頭
+    // （デコーダが再構成した概算値）がそのまま計画の始点になる。STOMP は入力の両端を
+    // 保つので、現在姿勢とのずれは出力に残り、MoveIt の実行前検証
+    // （allowed_start_tolerance）が「start point deviates from current robot state」で
+    // 実行を止める。seed を使わない上の分岐では start_positions を明示しているので
+    // この問題は起きない。
+    if (input.cols() > 0 && static_cast<size_t>(input.rows()) == start_positions.size() &&
+        start_positions.size() == goal_positions.size())
+    {
+      input.col(0) = Eigen::Map<const Eigen::VectorXd>(start_positions.data(), start_positions.size());
+      input.col(input.cols() - 1) =
+          Eigen::Map<const Eigen::VectorXd>(goal_positions.data(), goal_positions.size());
+    }
+    else
+    {
+      RCLCPP_WARN(rclcpp::get_logger("stomp_moveit"),
+                  "seed の次元が関節数と合わないため両端を固定できません "
+                  "(rows=%ld, joints=%ld)。計画の始点がずれる可能性があります",
+                  static_cast<long>(input.rows()), static_cast<long>(start_positions.size()));
+    }
+
     success = stomp->solve(input, waypoints); // 与えられた軌道(input)を起点に探索する
   }
   if (success)
   {
+    // 解いた軌道の両端を、要求された start / goal に戻す。
+    //
+    // STOMP は最適化なので、入力の両端を与えても出力の端点は平滑化でわずかに動く。
+    // MoveIt の約束は「返す計画は要求された開始状態から始まる」であり、ずれたまま
+    // 返すのは planner 側の契約違反になる。許容値を緩める対処は取らない（別の姿勢用の
+    // 軌道をそのまま走らせる方向で、検証の意味が無くなる）。隣り合う点の間隔に比べて
+    // 戻す量は小さいので、段差は通常の刻みの範囲に収まる。
+    //
+    // この上書きは STOMP の衝突コスト評価の後に行われる。上書きした端点が衝突して
+    // いないことは呼び出し側（StompPlanningContext::solve）が再検査する。
+    // 戻した量の最大値はログに残す。
+    if (waypoints.cols() > 0 && static_cast<size_t>(waypoints.rows()) == start_positions.size() &&
+        start_positions.size() == goal_positions.size())
+    {
+      const Eigen::VectorXd start_vec = Eigen::Map<const Eigen::VectorXd>(start_positions.data(), start_positions.size());
+      const Eigen::VectorXd goal_vec = Eigen::Map<const Eigen::VectorXd>(goal_positions.data(), goal_positions.size());
+      const double start_shift = (waypoints.col(0) - start_vec).cwiseAbs().maxCoeff();
+      const double goal_shift = (waypoints.col(waypoints.cols() - 1) - goal_vec).cwiseAbs().maxCoeff();
+      waypoints.col(0) = start_vec;
+      waypoints.col(waypoints.cols() - 1) = goal_vec;
+      RCLCPP_INFO(rclcpp::get_logger("stomp_moveit"),
+                  "endpoints restored to request: start shift=%.4f rad, goal shift=%.4f rad",
+                  start_shift, goal_shift);
+    }
+    else
+    {
+      RCLCPP_WARN(rclcpp::get_logger("stomp_moveit"),
+                  "軌道の次元が関節数と合わないため両端を戻せません "
+                  "(rows=%ld, joints=%ld)。計画の始点がずれる可能性があります",
+                  static_cast<long>(waypoints.rows()), static_cast<long>(start_positions.size()));
+    }
+
     trajectory = std::make_shared<robot_trajectory::RobotTrajectory>(start_state.getRobotModel(), group);
     fill_robot_trajectory(waypoints, start_state, *trajectory);
   }
 
   return success;
+}
+
+/**
+ * 復元した両端（要求の start / goal）が planning scene と衝突していないかを検査する。
+ * solveWithStomp の端点上書きは STOMP の衝突コスト評価の後に行われるため、
+ * 上書き後の端点だけはここで改めて検査する。
+ */
+bool StompPlanningContext::endpointsCollisionFree(const robot_trajectory::RobotTrajectory& trajectory) const
+{
+  const auto planning_scene = getPlanningScene();
+  const std::size_t n = trajectory.getWayPointCount();
+  if (!planning_scene || n == 0)
+  {
+    return true;
+  }
+  for (std::size_t idx : { std::size_t(0), n - 1 })
+  {
+    moveit::core::RobotState state(trajectory.getWayPoint(idx));
+    state.update();
+    if (planning_scene->isStateColliding(state, getGroupName()))
+    {
+      RCLCPP_ERROR(rclcpp::get_logger("stomp_moveit"), "restored endpoint %zu (of %zu) is in collision", idx, n);
+      return false;
+    }
+  }
+  return true;
 }
 
 bool extractSeedTrajectory(const planning_interface::MotionPlanRequest& req,     // MotionPlanRequestから受け取ったプランニングの計画
@@ -540,6 +623,16 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
         timeout_future.valid() && timeout_future.wait_for(std::chrono::nanoseconds(1)) == std::future_status::ready;
     result_code =
         timed_out ? moveit_msgs::msg::MoveItErrorCodes::TIMED_OUT : moveit_msgs::msg::MoveItErrorCodes::PLANNING_FAILED;
+  }
+  else if (!endpointsCollisionFree(*trajectory))
+  {
+    // solveWithStomp は STOMP の衝突コスト評価の後に両端を要求の start / goal へ
+    // 書き換える。書き換えた端点は STOMP の検査を通っていないので、ここで
+    // planning scene に対して再検査し、衝突していれば計画失敗として返す。
+    RCLCPP_ERROR(rclcpp::get_logger("stomp_moveit"),
+                 "endpoint recheck failed: restored start/goal state is in collision");
+    result_code = moveit_msgs::msg::MoveItErrorCodes::PLANNING_FAILED;
+    trajectory.reset();
   }
   else
   {
