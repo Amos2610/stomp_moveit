@@ -63,6 +63,9 @@ public:
   rclcpp::Client<path_reuse_method_interfaces::srv::GetPathSeedTrajectory>::SharedPtr get_path_seed_client_; // PathSeedを取得するためのサービスクライアント
 
 private:
+  /// 復元した両端（要求の start / goal）が planning scene と衝突していないか（solveWithStomp の上書き後の再検査）
+  bool endpointsCollisionFree(const robot_trajectory::RobotTrajectory& trajectory) const;
+
   const stomp_moveit::Params params_;
   std::shared_ptr<stomp::Stomp> stomp_;
   std::shared_ptr<rclcpp::Publisher<visualization_msgs::msg::MarkerArray>> path_publisher_;
