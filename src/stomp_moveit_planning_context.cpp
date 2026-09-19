@@ -514,15 +514,29 @@ bool StompPlanningContext::solve(planning_interface::MotionPlanResponse& res)
   else if (use_custom_trajectory)
   {
     // パスシードの使用が要求されているのにシードが無い（空）か次元が合わない。
-    // 以前は ERROR を出した後に線形補間の初期軌道で計画を続けていたため、
-    // 「検証済みシードに接地された動作」の外で計画が通っていた。
-    // 黙って落とさず、計画失敗（E-seed: シード未被覆）として返す。
-    RCLCPP_ERROR(rclcpp::get_logger("stomp_moveit"),
-                 "path seed requested (stomp.use_custom_trajectory=true) but no usable seed "
-                 "(rows=%zu, cols=%zu); refusing to plan without a seed",
-                 path_seed_rows_, path_seed_cols_);
-    res.error_code_.val = moveit_msgs::msg::MoveItErrorCodes::PLANNING_FAILED;
-    return false;
+    // stomp.require_seed が真なら計画失敗として返す（シード無しの計画を実行に
+    // 通さず、「シードが無かった」ことを結果として区別したいとき）。偽（既定）なら
+    // 警告を出し、start / goal の線形補間を初期軌道にして通常の STOMP 計画を続ける。
+    bool require_seed = false;
+    std::vector<rclcpp::Parameter> seed_params = node_->get_parameters({"stomp.require_seed"});
+    if (!seed_params.empty() && seed_params[0].get_type() == rclcpp::ParameterType::PARAMETER_BOOL)
+    {
+      require_seed = seed_params[0].as_bool();
+    }
+    if (require_seed)
+    {
+      RCLCPP_ERROR(rclcpp::get_logger("stomp_moveit"),
+                   "path seed requested (stomp.use_custom_trajectory=true) but no usable seed "
+                   "(rows=%zu, cols=%zu); stomp.require_seed=true so refusing to plan without a seed",
+                   path_seed_rows_, path_seed_cols_);
+      res.error_code_.val = moveit_msgs::msg::MoveItErrorCodes::PLANNING_FAILED;
+      return false;
+    }
+    RCLCPP_WARN(rclcpp::get_logger("stomp_moveit"),
+                "path seed requested (stomp.use_custom_trajectory=true) but no usable seed "
+                "(rows=%zu, cols=%zu); planning from linear interpolation instead",
+                path_seed_rows_, path_seed_cols_);
+    setCustomTrajectory(nullptr);
   }
   else if (extractSeedTrajectory(request_, getPlanningScene()->getRobotModel(), input_trajectory))
   {
